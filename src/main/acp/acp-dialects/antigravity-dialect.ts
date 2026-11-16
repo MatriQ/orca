@@ -2,10 +2,30 @@ import { z } from 'zod'
 import { legacyAgentSessionQuestionAnswers } from '../../../shared/agent-session/agent-session-question-answer'
 import { AcpRpcError, acpErrorDataWords, type AcpAgentError } from '../transport/acp-errors'
 import { readAcpPermissionRequest } from '../protocol/acp-permission-requests'
+import {
+  ACP_FORM_ELICITATION_METHOD,
+  acpFormElicitationPresentation
+} from '../requests/acp-form-elicitation'
 import { acpPermissionPresentation } from '../requests/acp-timeline-requests'
+import { isAcpUrlElicitation } from '../requests/acp-url-elicitation'
 import type { ModelInfo, ToolCallUpdate } from '../generated/acp-protocol.generated'
 import { pendingAcpResolution, type AcpDialect, type AcpRequestPresentation } from './acp-dialect'
 
+// The server's question forms open with only a count; each field's title is the real question.
+const QUESTION_FORM_MESSAGE = /^The agent has (?:a question|\d+ questions)\.$/
+const formMessageSchema = z.looseObject({ message: z.string() })
+
+function questionForm(method: string, params: unknown): AcpRequestPresentation | undefined {
+  if (method !== ACP_FORM_ELICITATION_METHOD || isAcpUrlElicitation(params)) {
+    return undefined
+  }
+  const form = formMessageSchema.safeParse(params).data
+  return form && QUESTION_FORM_MESSAGE.test(form.message.trim())
+    ? acpFormElicitationPresentation({ ...form, message: '' })
+    : undefined
+}
+
+// Older servers without form support ask through interaction_ permissions instead.
 // interaction_ permissions are questions, even in yolo mode; never auto-approve them.
 function questionRequest(method: string, params: unknown): AcpRequestPresentation | undefined {
   const request =
@@ -137,7 +157,12 @@ function familyEfforts(family: string, models: readonly ModelInfo[]) {
 }
 
 export const ANTIGRAVITY_ACP_DIALECT: AcpDialect = {
-  request: (method, params) => questionRequest(method, params) ?? warnedApproval(method, params),
+  // With forms, ask_question carries a write-in field per question; permissions cannot carry text.
+  clientCapabilities: { elicitation: { form: {} } },
+  request: (method, params) =>
+    questionForm(method, params) ??
+    questionRequest(method, params) ??
+    warnedApproval(method, params),
   normalizeToolUpdate,
   promptErrorDetail,
   // Avoid using the full command line as the tool name.
