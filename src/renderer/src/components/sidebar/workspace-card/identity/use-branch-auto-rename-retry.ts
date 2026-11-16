@@ -35,7 +35,8 @@ export function useBranchAutoRenameRetry(args: {
   const session = useRef(0)
   // 'click' until the started event names the attempt this window launched.
   const tracked = useRef<number | 'click' | null>(null)
-  const lastApplied = useRef<number | null>(null)
+  // Attempt ids are monotonic: anything at or below the newest finished id is stale or a duplicate.
+  const latestFinished = useRef(0)
   const callbacks = useRef(args)
   useLayoutEffect(() => {
     callbacks.current = args
@@ -45,10 +46,14 @@ export function useBranchAutoRenameRetry(args: {
     if (token !== session.current) {
       return
     }
-    if (result.attemptId !== null && result.attemptId === lastApplied.current) {
+    const stale =
+      result.attemptId === null
+        ? tracked.current !== 'click'
+        : tracked.current !== result.attemptId && result.attemptId <= latestFinished.current
+    if (stale) {
       return
     }
-    lastApplied.current = result.attemptId
+    latestFinished.current = Math.max(latestFinished.current, result.attemptId ?? 0)
     tracked.current = null
     setRunning(false)
     if (result.outcome.kind === 'renamed') {
@@ -64,7 +69,7 @@ export function useBranchAutoRenameRetry(args: {
   useEffect(() => {
     const token = ++session.current
     tracked.current = null
-    lastApplied.current = null
+    latestFinished.current = 0
     setRunning(false)
     setLastOutcome(null)
     setLastFinishedAt(null)
@@ -80,7 +85,12 @@ export function useBranchAutoRenameRetry(args: {
           return
         }
         setAvailability(result.available ? 'available' : 'unavailable')
-        if (result.runningAttemptId !== null) {
+        // A completion that arrived before this reply already settled that attempt.
+        if (
+          result.runningAttemptId !== null &&
+          result.runningAttemptId > latestFinished.current &&
+          tracked.current === null
+        ) {
           tracked.current = result.runningAttemptId
           setRunning(true)
         }
@@ -95,7 +105,10 @@ export function useBranchAutoRenameRetry(args: {
         return
       }
       if (event.phase === 'started') {
-        if (tracked.current === null || tracked.current === 'click') {
+        if (
+          event.attemptId > latestFinished.current &&
+          (tracked.current === null || tracked.current === 'click')
+        ) {
           tracked.current = event.attemptId
           setRunning(true)
         }
@@ -106,7 +119,9 @@ export function useBranchAutoRenameRetry(args: {
           { attemptId: event.attemptId, outcome: event.outcome, finishedAt: event.finishedAt },
           token
         )
+        return
       }
+      latestFinished.current = Math.max(latestFinished.current, event.attemptId)
     })
     return () => {
       live = false

@@ -7,7 +7,7 @@ import type { FirstWorkBranchRenameDeps } from './first-work-branch-rename'
 import type { FirstWorkAttempt, FirstWorkRenameVerdict } from './first-work-rename-attempts'
 import { verdictBuilders } from './first-work-rename-verdicts'
 
-/** Rechecks every guard after the last await, immediately before the branch rename. */
+/** Rechecks every guard immediately before the branch rename; synchronous guards run after the last await. */
 export async function recheckBeforeRename(
   worktreeId: string,
   currentBranch: string,
@@ -16,6 +16,25 @@ export async function recheckBeforeRename(
   attempt: FirstWorkAttempt
 ): Promise<FirstWorkRenameVerdict | null> {
   const { stop, defer } = verdictBuilders(worktreeId, deps)
+  attempt.assertIncarnation()
+  const probe = await probeBranchUpstream(exec)
+  // Read HEAD after the probe so the probe provably described `currentBranch`.
+  const branchNow = (await exec(['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim()
+  if (branchNow !== currentBranch) {
+    return defer(
+      'branch-changed',
+      `branch changed during generation (${currentBranch} -> ${branchNow})`
+    )
+  }
+  if (probe.outcome === 'has-upstream') {
+    return {
+      ...stop('branch-pushed', `branch "${currentBranch}" was pushed during generation`),
+      settles: false
+    }
+  }
+  if (probe.outcome === 'probe-failed') {
+    return defer('interrupted', `upstream probe failed after generation: ${probe.message}`)
+  }
   attempt.assertIncarnation()
   if (!deps.getSettings().autoRenameBranchFromWork) {
     return {
@@ -33,24 +52,5 @@ export async function recheckBeforeRename(
   if (!deps.canRenameOrcaCreatedBranch(worktreeId)) {
     return stop('name-chosen', 'worktree is not eligible for auto-rename', true)
   }
-  // Generation can outlive a branch switch or publication.
-  const branchNow = (await exec(['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim()
-  if (branchNow !== currentBranch) {
-    return defer(
-      'branch-changed',
-      `branch changed during generation (${currentBranch} -> ${branchNow})`
-    )
-  }
-  const probe = await probeBranchUpstream(exec)
-  if (probe.outcome === 'has-upstream') {
-    return {
-      ...stop('branch-pushed', `branch "${currentBranch}" was pushed during generation`),
-      settles: false
-    }
-  }
-  if (probe.outcome === 'probe-failed') {
-    return defer('interrupted', `upstream probe failed after generation: ${probe.message}`)
-  }
-  attempt.assertIncarnation()
   return null
 }

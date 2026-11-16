@@ -109,7 +109,7 @@ describe('retryFirstWorkRename', () => {
     expect(result.outcome).toEqual({ kind: 'renamed' })
     expect(generateBranchNameMock.mock.calls[0][0].firstPrompt).toBe('Fix the login form')
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
-      ['branch', '-m', 'fix-login'],
+      ['branch', '-m', 'Nautilus-8', 'fix-login'],
       expect.anything()
     )
   })

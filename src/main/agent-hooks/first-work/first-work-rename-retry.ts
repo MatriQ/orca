@@ -13,6 +13,7 @@ import { parseWorkspaceKey } from '../../../shared/workspace/identity/workspace-
 import { gitExecFileAsync } from '../../git/command-runner/git-exec-file'
 import { probeBranchUpstream, type GitExec } from '../../git/worktrees/checkout/branch-rename'
 import { resolveGitRouteForHost } from '../../providers/execution-host-provider-dispatch'
+import { guardWslUncPathAccess } from '../../wsl/filesystem/wsl-unc-access-gate'
 import { readBranchChangesForNaming } from './first-work-branch-changes'
 import { runFirstWorkRename, type FirstWorkBranchRenameDeps } from './first-work-branch-rename'
 import {
@@ -192,7 +193,9 @@ export async function getFirstWorkRetryAvailability(
   ) {
     return unavailable
   }
-  const exec: GitExec = (args) => gitExecFileAsync(args, { cwd: worktreePath })
+  // A background probe must never boot a stopped WSL distro; a refusal leaves retry available.
+  const exec: GitExec = (args) =>
+    guardWslUncPathAccess(worktreePath, () => gitExecFileAsync(args, { cwd: worktreePath }))
   try {
     const branch = (await exec(['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim()
     const leaf = branch.slice(branch.lastIndexOf('/') + 1)

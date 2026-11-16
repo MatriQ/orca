@@ -89,7 +89,7 @@ export async function readBranchChangesForNaming(args: {
 }): Promise<BranchChangesLookup> {
   const runGit = args.runGit ?? gitExecFileAsync
   const capture = async (gitArgs: string[], maxBuffer = EVIDENCE_MAX_BUFFER) => {
-    if (args.signal.aborted) {
+    if (args.signal.aborted || Date.now() >= args.deadlineAt) {
       return { kind: 'failed' } as const
     }
     try {
@@ -137,6 +137,7 @@ export async function readBranchChangesForNaming(args: {
   const untrackedNames = evidenceText(untracked)
   if (
     args.signal.aborted ||
+    Date.now() >= args.deadlineAt ||
     commitSubjects === null ||
     workingStat === null ||
     stagedStat === null ||

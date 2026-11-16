@@ -270,6 +270,73 @@ describe('AutoRenameFailedDialog retry', () => {
     expect(footerButtons()).toEqual(['Dismiss', 'Try again'])
   })
 
+  it('ignores an earlier attempt’s late reply after a newer attempt finished', async () => {
+    await renderFailure()
+    const first = Promise.withResolvers<BranchAutoRenameRetryResult>()
+    retryBranchAutoRename.mockReturnValueOnce(first.promise)
+    await act(async () => button('Try again')?.click())
+    const id = 'repo1::/path/wt1'
+    await act(async () => emitAttempt({ worktreeId: id, attemptId: 1, phase: 'started' }))
+    await act(async () =>
+      emitAttempt({
+        worktreeId: id,
+        attemptId: 1,
+        phase: 'finished',
+        outcome: { kind: 'nothing-yet' },
+        finishedAt: 1
+      })
+    )
+    retryBranchAutoRename.mockResolvedValueOnce({
+      attemptId: 2,
+      outcome: { kind: 'ineligible', reason: 'branch-pushed' },
+      finishedAt: 2
+    })
+    await act(async () => button('Try again')?.click())
+    await act(async () =>
+      first.resolve({ attemptId: 1, outcome: { kind: 'nothing-yet' }, finishedAt: 1 })
+    )
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      'The branch was pushed, so Orca kept its name.'
+    )
+    expect(footerButtons()).toEqual(['Dismiss'])
+  })
+
+  it('does not resurrect an attempt that finished before the availability reply', async () => {
+    const availability = Promise.withResolvers<{
+      available: boolean
+      runningAttemptId: number | null
+    }>()
+    getBranchAutoRenameRetryAvailability.mockReturnValue(availability.promise)
+    getBranchRenameFailureOutput.mockResolvedValue(null)
+    useAppStore.setState({
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({
+            id: 'repo1::/path/wt1',
+            repoId: 'repo1',
+            firstAgentMessageRenameError: EXCERPT_ERROR
+          })
+        ]
+      }
+    })
+    await act(async () => root.render(<WorkspaceFailure />))
+    const id = 'repo1::/path/wt1'
+    await act(async () => emitAttempt({ worktreeId: id, attemptId: 9, phase: 'started' }))
+    await act(async () =>
+      emitAttempt({
+        worktreeId: id,
+        attemptId: 9,
+        phase: 'finished',
+        outcome: { kind: 'failed' },
+        finishedAt: 1
+      })
+    )
+    await act(async () => availability.resolve({ available: true, runningAttemptId: 9 }))
+    expect(button('Dismiss')?.disabled).toBe(false)
+    expect(button('Try again')).toBeDefined()
+    expect(button('Naming branch…')).toBeUndefined()
+  })
+
   it('follows an automatic attempt that starts and finishes while the dialog is open', async () => {
     await renderFailure()
     await act(async () =>

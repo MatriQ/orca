@@ -18,7 +18,6 @@ import { getRepoExecutionHostId } from '../../../shared/execution-host'
 import { withCheckoutLock } from '../../git/worktrees/checkout/branch-switch'
 import {
   probeBranchUpstream,
-  renameCurrentBranch,
   resolveUniqueBranchName,
   type GitExec
 } from '../../git/worktrees/checkout/branch-rename'
@@ -264,7 +263,8 @@ async function runAutoRename(
       if (blocked) {
         return blocked
       }
-      await renameCurrentBranch(exec, newBranch)
+      // Name the source branch: a terminal checkout after the recheck must not redirect the rename.
+      await exec(['branch', '-m', currentBranch, newBranch])
       return newBranch
     }
   )
